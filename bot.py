@@ -42,6 +42,15 @@ DB_PATH = os.getenv("DB_PATH", "data/shimanami.db")
 STOCK_API = "https://shimanami.sports.navitime.jp/shimanami/bookings/stocks"
 BOOKING_URL = "https://www.shimanami-bike-rental.com/booking/term"
 
+# Chat ids allowed to use /admin (comma-separated). Empty = nobody.
+ADMIN_CHAT_IDS = {
+    int(x) for x in os.getenv("ADMIN_CHAT_IDS", "").replace(" ", "").split(",") if x
+}
+
+
+def is_admin(chat_id) -> bool:
+    return chat_id in ADMIN_CHAT_IDS
+
 store = Store(DB_PATH)
 
 # Conversation states for the /watch wizard.
@@ -158,6 +167,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "3. Когда велосипед появится, придёт уведомление.\n\n"
         "/status — посмотреть, что сейчас свободно/разобрано и когда была "
         "последняя проверка.\n"
+        "/whoami — узнать свой chat_id.\n"
         f"Проверка идёт автоматически каждые {int(CHECK_INTERVAL_MIN)} мин.",
     )
 
@@ -320,6 +330,70 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # --------------------------------------------------------------------------
+# /whoami and /admin
+# --------------------------------------------------------------------------
+async def cmd_whoami(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    cid = update.effective_chat.id
+    role = "админ" if is_admin(cid) else "пользователь"
+    await update.message.reply_text(
+        f"Твой chat_id: `{cid}`\nРоль: {role}\n\n"
+        "Чтобы стать админом, добавь этот id в переменную окружения "
+        "ADMIN_CHAT_IDS на хостинге и передеплой.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
+async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    cid = update.effective_chat.id
+    if not is_admin(cid):
+        await update.message.reply_text(
+            "Команда только для админа. Узнать свой id — /whoami."
+        )
+        return
+
+    subs = store.all_subscriptions()
+    last = store.get_meta("last_check_iso")
+    users = len({s["chat_id"] for s in subs})
+
+    header = (
+        "📊 *Сводка бота*\n"
+        f"Пользователей: {users}\n"
+        f"Отслеживаний: {len(subs)}\n"
+        f"Последняя проверка: {last or '—'} UTC\n"
+    )
+
+    if not subs:
+        await update.message.reply_text(header, parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # Aggregate by (bike @ terminal, date): how many watchers + current count.
+    groups = {}
+    for s in subs:
+        key = (s["cycle_type"], s["port_id"], s["date"])
+        g = groups.setdefault(key, {"watchers": 0, "count": s["last_count"]})
+        g["watchers"] += 1
+        if s["last_count"] is not None:
+            g["count"] = s["last_count"]
+
+    lines = ["", "*По отслеживаниям:*"]
+    for (cyc, port, date), g in sorted(groups.items(), key=lambda kv: kv[0][2]):
+        bike = CYCLE_LABEL.get(cyc, cyc)
+        term = TERMINAL_LABEL.get(port, port).split(" (")[0]
+        c = g["count"]
+        state = (
+            "не проверено" if c is None
+            else "нет в наличии" if c < 0
+            else "разобрано" if c == 0
+            else f"✅ {c} шт."
+        )
+        lines.append(f"• {date} · {bike} @ {term}: {state} (следят: {g['watchers']})")
+
+    text = header + "\n".join(lines)
+    # Telegram messages cap at 4096 chars; trim defensively.
+    await update.message.reply_text(text[:4000], parse_mode=ParseMode.MARKDOWN)
+
+
+# --------------------------------------------------------------------------
 # Background availability check
 # --------------------------------------------------------------------------
 async def run_check(app: Application):
@@ -392,6 +466,8 @@ def main():
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("stop", cmd_stop))
+    app.add_handler(CommandHandler("whoami", cmd_whoami))
+    app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CallbackQueryHandler(stop_callback, pattern=r"^(del:|delall)"))
 
     app.job_queue.run_repeating(
