@@ -335,11 +335,12 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_whoami(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     cid = update.effective_chat.id
     role = "админ" if is_admin(cid) else "пользователь"
+    # Plain text on purpose: the id and the variable name contain underscores,
+    # which legacy Markdown would misread as italic markers.
     await update.message.reply_text(
-        f"Твой chat_id: `{cid}`\nРоль: {role}\n\n"
-        "Чтобы стать админом, добавь этот id в переменную окружения "
-        "ADMIN_CHAT_IDS на хостинге и передеплой.",
-        parse_mode=ParseMode.MARKDOWN,
+        f"Твой chat_id: {cid}\nРоль: {role}\n\n"
+        "Чтобы стать админом, добавь это число в переменную окружения "
+        "ADMIN_CHAT_IDS на хостинге и передеплой."
     )
 
 
