@@ -1,0 +1,55 @@
+name: Shimanami battery-assisted bike watch
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      ping:
+        description: "Send a Telegram test message instead of checking stock"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: shimanami-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      TARGET_DATES: "2026-10-15"
+      PORT_ID: "806821"
+      PORT_LABEL: "Onomichi Station"
+      CYCLE_TYPE: "電動アシスト自転車"
+      CYCLE_LABEL: "Battery-Assisted Bicycle"
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      WORKFLOW_FILENAME: "shimanami-watch.yml"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Send Telegram test message
+        if: inputs.ping
+        run: python3 shimanami_watch.py --ping
+
+      - name: Check availability
+        if: ${{ !inputs.ping }}
+        run: python3 shimanami_watch.py
+
+      - name: Upload debug files if check fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shimanami-debug
+          path: debug/
+          retention-days: 7
